@@ -1,0 +1,61 @@
+diff --git a/large_file.py b/large_file.py
+index 1111111..2222222 100644
+--- a/large_file.py
++++ b/large_file.py
+@@ -1,10 +1,60 @@
+ def process_data(data):
+-    result = []
+-    for item in data:
+-        if item is not None:
+-            result.append(item)
+-    return result
++    # Major refactor: improved validation and transformation
++    if data is None:
++        raise ValueError("Data cannot be None")
++
++    if not isinstance(data, list):
++        raise TypeError("Data must be a list")
++
++    result = []
++
++    for item in data:
++        if item is None:
++            continue
++
++        if isinstance(item, str):
++            item = item.strip()
++
++        if len(str(item)) == 0:
++            continue
++
++        result.append(item)
++
++    return result
++
++
++def calculate_statistics(numbers):
++    if not numbers:
++        return {
++            "mean": 0,
++            "min": 0,
++            "max": 0,
++        }
++
++    total = sum(numbers)
++    mean = total / len(numbers)
++
++    return {
++        "mean": mean,
++        "min": min(numbers),
++        "max": max(numbers),
++    }
++
++
++def normalize_text(text):
++    if not text:
++        return ""
++
++    text = text.lower()
++    text = text.strip()
++
++    return text

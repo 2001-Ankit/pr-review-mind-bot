@@ -1,0 +1,2 @@
+class OpenAi:
+  pass
