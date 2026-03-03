@@ -1,49 +1,67 @@
-from typing import List
+import json
 from .models import ReviewFindings
 
 
 class Reviewer:
 
-    def review_file(self, file_change):
+    def __init__(self, llm):
+        self.llm = llm
 
-        findings = []
-
-        total_changes = file_change.total_added + file_change.total_removed
-
-        if total_changes > 10:
-            findings.append(
-                ReviewFindings(
-                    severity="medium",
-                    category="refactor",
-                    message="Large file change detected. Consider splitting into smaller PRs.",
-                    file_name=file_change.file_name
-                )
-            )
-
-        if getattr(file_change, "is_deleted", False):
-            findings.append(
-                ReviewFindings(
-                    severity="high",
-                    category="bug",
-                    message="File was deleted. Ensure this does not break dependencies.",
-                    file_name=file_change.file_name
-                )
-            )
-
-
-
-        return findings
-    
     def review_hunk(self, hunk):
 
+        system_prompt =system_prompt = """
+            You are a senior software engineer reviewing a pull request.
+
+            You MUST return ONLY valid JSON.
+            Do NOT include markdown.
+            Do NOT include explanation text.
+            Do NOT wrap response in code blocks.
+
+            Return a JSON array in this format:
+
+            [
+            {
+                "severity": "low | medium | high",
+                "category": "bug | refactor | test | security",
+                "message": "short actionable feedback"
+            }
+            ]
+
+            If there are no issues, return an empty array: []
+            """
+
+        user_prompt = f"""
+                Review this code change:
+
+                {hunk.raw_lines if hasattr(hunk, "raw_lines") else hunk.header}
+
+                Return format:
+
+                [
+                {{
+                    "severity": "low|medium|high",
+                    "category": "bug|refactor|test|security",
+                    "message": "string"
+                }}
+                ]
+                """
+
+        response = self.llm.generate(system_prompt, user_prompt)
+
+        try:
+            data = json.loads(response)
+        except:
+            return []
+
         findings = []
 
-        if len(hunk.added_lines) > 5:
+        for item in data:
             findings.append(
                 ReviewFindings(
-                    severity="low",
-                    category="refactor",
-                    message="Large hunk detected. Consider smaller logical changes."
+                    severity=item["severity"],
+                    category=item["category"],
+                    message=item["message"],
                 )
             )
+
         return findings

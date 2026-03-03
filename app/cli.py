@@ -1,6 +1,7 @@
 import sys
 from app.core.diff_parser import DiffParser
 from app.engine.reviewer import Reviewer
+from app.llm.gemini import GeminiProvider
 
 
 def main():
@@ -14,24 +15,18 @@ def main():
     with open(diff_path, "r", encoding="utf-8") as f:
         diff_text = f.read()
 
-
     parser = DiffParser()
     files = parser.parse(diff_text)
 
-    reviewer = Reviewer()
-    
+    llm = GeminiProvider()
+    reviewer = Reviewer(llm)
+
     all_findings = []
 
     for file in files:
-
-        # File-level review
-        findings = reviewer.review_file(file)
-        all_findings.extend(findings)
-
-        # Hunk-level review
         for hunk in file.hunks:
-            hunk_findings = reviewer.review_hunk(hunk)
-            all_findings.extend(hunk_findings)
+            findings = reviewer.review_hunk(hunk)
+            all_findings.extend(findings)
 
     print("\n=== Review Results ===\n")
 
@@ -39,9 +34,12 @@ def main():
         print("No issues detected.")
     else:
         for finding in all_findings:
-            print(f"[{finding.severity.upper()}] "
-                  f"{finding.category} - "
-                  f"{finding.message}")
+            print(
+                f"[{finding.severity.upper()}] "
+                f"{finding.category} - "
+                f"{finding.message}"
+            )
+
 
 if __name__ == "__main__":
     main()
