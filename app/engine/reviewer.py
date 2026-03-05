@@ -1,4 +1,5 @@
 import json
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .models import ReviewFindings
 
 
@@ -9,7 +10,7 @@ class Reviewer:
 
     def review_hunk(self, hunk):
 
-        system_prompt =system_prompt = """
+        system_prompt = """
             You are a senior software engineer reviewing a pull request.
 
             You MUST return ONLY valid JSON.
@@ -45,6 +46,50 @@ class Reviewer:
                 }}
                 ]
                 """
+
+        response = self.llm.generate(system_prompt, user_prompt)
+
+        try:
+            data = json.loads(response)
+        except:
+            return []
+
+        findings = []
+
+        for item in data:
+            findings.append(
+                ReviewFindings(
+                    severity=item["severity"],
+                    category=item["category"],
+                    message=item["message"],
+                )
+            )
+
+        return findings
+    
+    def review_chunk(self, chunk):
+
+        system_prompt = """
+            You are a senior software engineer reviewing a pull request.
+
+            Return ONLY valid JSON:
+
+            [
+            {
+            "severity": "low | medium | high",
+            "category": "bug | refactor | test | security",
+            "message": "short actionable feedback"
+            }
+            ]
+
+            If no issues return []
+            """
+
+        user_prompt = f"""
+            Review this pull request chunk:
+
+            {chunk}
+            """
 
         response = self.llm.generate(system_prompt, user_prompt)
 

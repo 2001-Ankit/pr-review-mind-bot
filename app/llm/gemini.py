@@ -20,10 +20,10 @@ class GeminiProvider(LLMProvider):
                       {user_prompt}
                       """
 
-        print("full prompt")
+        print("full prompt", full_prompt)
         response = self.client.models.generate_content(
-            model="gemini-2.5-flash-lite",
+            model="gemini-3-flash-preview",
             contents=full_prompt
         )
-        print(response.text)
+        # print(response.text)
         return response.text
