@@ -86,18 +86,265 @@ if __name__ == "__main__":
     parser = DiffParser()
 
     diff_text = """
-diff --git a/example.py b/example.py
-@@ -1,3 +1,4 @@
- def hello():
--    print("Hello")
-+    print("Hello world")
-+    print("New line")
+iff --git a/.changeset/feat-manual-notation.md b/.changeset/feat-manual-notation.md
+new file mode 100644
+index 0000000..1bdf2ba
+--- /dev/null
++++ b/.changeset/feat-manual-notation.md
+@@ -0,0 +1,5 @@
++---
++"@googleworkspace/cli": minor
++---
++
++Add [MANUAL] notation to help text and runtime messages for steps requiring human interaction
+diff --git a/skills/gws-shared/SKILL.md b/skills/gws-shared/SKILL.md
+index c73285d..4efaff1 100644
+--- a/skills/gws-shared/SKILL.md
++++ b/skills/gws-shared/SKILL.md
+@@ -18,10 +18,10 @@ The `gws` binary must be on `$PATH`. See the project README for install options.
+ ## Authentication
+
+ ```bash
+-# Browser-based OAuth (interactive)
++# [MANUAL] Browser-based OAuth (interactive — opens browser for consent)
+ gws auth login
+
+-# Service Account
++# Service Account (no manual interaction required)
+ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+ ```
+
+diff --git a/src/auth_commands.rs b/src/auth_commands.rs
+index 852190a..b46843e 100644
+--- a/src/auth_commands.rs
++++ b/src/auth_commands.rs
+@@ -116,12 +116,12 @@ fn token_cache_path() -> PathBuf {
+ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
+     const USAGE: &str = concat!(
+         "Usage: gws auth <login|setup|status|export|logout>\n\n",
+-        "  login   Authenticate via OAuth2 (opens browser)\n",
++        "  login   [MANUAL] Authenticate via OAuth2 (opens browser for consent)\n",
+         "          --readonly   Request read-only scopes\n",
+         "          --full       Request all scopes incl. pubsub + cloud-platform\n",
+         "                       (may trigger restricted_client for unverified apps)\n",
+         "          --scopes     Comma-separated custom scopes\n",
+-        "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
++        "  setup   [MANUAL] Configure GCP project + OAuth client (requires gcloud)\n",
+         "          --project    Use a specific GCP project\n",
+         "  status  Show current authentication state\n",
+         "  export  Print decrypted credentials to stdout\n",
+@@ -159,7 +159,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
+     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+     {
+         Box::pin(async move {
+-            eprintln!("Open this URL in your browser to authenticate:\n");
++            eprintln!("[MANUAL] Open this URL in your browser to authenticate:\n");
+             eprintln!("  {url}\n");
+             Ok(String::new())
+         })
+@@ -341,8 +341,8 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
+         Err(_) => Err(GwsError::Auth(
+             "No OAuth client configured.\n\n\
+              Either:\n  \
+-               1. Run `gws auth setup` to configure a GCP project and OAuth client\n  \
+-               2. Download client_secret.json from Google Cloud Console and save it to:\n     \
++               1. [MANUAL] Run `gws auth setup` (interactive wizard, opens browser)\n  \
++               2. [MANUAL] Download client_secret.json from Google Cloud Console and save it to:\n     \       
+                   ~/.config/gws/client_secret.json\n  \
+                3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"
+                 .to_string(),
+diff --git a/src/error.rs b/src/error.rs
+index 25cc9f5..c68e350 100644
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -111,11 +111,11 @@ pub fn print_error_json(err: &GwsError) {
+     {
+         if reason == "accessNotConfigured" {
+             eprintln!();
+-            eprintln!("💡 API not enabled for your GCP project.");
++            eprintln!("💡 [MANUAL] API not enabled for your GCP project.");
+             if let Some(url) = enable_url {
+-                eprintln!("   Enable it at: {url}");
++                eprintln!("   [MANUAL] Enable it at: {url}");
+             } else {
+-                eprintln!("   Visit the GCP Console → APIs & Services → Library to enable the required API."); 
++                eprintln!("   [MANUAL] Visit the GCP Console → APIs & Services → Library to enable the required API.");
+             }
+             eprintln!("   After enabling, wait a few seconds and retry your command.");
+         }
+diff --git a/src/setup.rs b/src/setup.rs
+index b5757fa..46b28b0 100644
+--- a/src/setup.rs
++++ b/src/setup.rs
+@@ -907,7 +907,7 @@ fn stage_account(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+                             .unwrap()
+                             .suspend()
+                             .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+-                        eprintln!("  → Opening browser for login...");
++                        eprintln!("  → [MANUAL] Opening browser for login...");
+                         gcloud_auth_login()?;
+                         let acct = get_gcloud_account()?.ok_or_else(|| {
+                             GwsError::Auth("Authentication failed — no active account".to_string())
+@@ -1237,21 +1237,21 @@ fn manual_oauth_instructions(project_id: &str) -> String {
+
+     format!(
+         concat!(
+-            "OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
++            "[MANUAL] OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
+             "Follow these steps:\n\n",
+-            "1. Configure the OAuth consent screen (if not already done):\n",
++            "1. [MANUAL] Configure the OAuth consent screen (if not already done):\n",
+             "   {consent_url}\n",
+             "   → User Type: External\n",
+             "   → App name: gws CLI (or your preferred name)\n",
+             "   → Support email: your Google account email\n",
+             "   → Save and continue through all screens\n\n",
+-            "2. Create an OAuth client ID:\n",
++            "2. [MANUAL] Create an OAuth client ID:\n",
+             "   {creds_url}\n",
+             "   → Click 'Create Credentials' → 'OAuth client ID'\n",
+             "   → Application type: Desktop app\n",
+             "   → Name: gws CLI (or your preferred name)\n",
+             "   → Click 'Create'\n\n",
+-            "3. Copy the Client ID and Client Secret shown in the dialog.\n\n",
++            "3. [MANUAL] Copy the Client ID and Client Secret shown in the dialog.\n\n",
+             "4. Provide the credentials to gws using one of these methods:\n\n",
+             "   Option A — Environment variables (recommended for CI/scripts):\n",
+             "     export GOOGLE_WORKSPACE_CLI_CLIENT_ID=\"<your-client-id>\"\n",
+
+diff --git a/.changeset/feat-manual-notation.md b/.changeset/feat-manual-notation.md
+new file mode 100644
+index 0000000..1bdf2ba
+--- /dev/null
++++ b/.changeset/feat-manual-notation.md
+@@ -0,0 +1,5 @@
++---
++"@googleworkspace/cli": minor
++---
++
++Add [MANUAL] notation to help text and runtime messages for steps requiring human interaction
+diff --git a/skills/gws-shared/SKILL.md b/skills/gws-shared/SKILL.md
+index c73285d..4efaff1 100644
+--- a/skills/gws-shared/SKILL.md
++++ b/skills/gws-shared/SKILL.md
+@@ -18,10 +18,10 @@ The `gws` binary must be on `$PATH`. See the project README for install options.
+ ## Authentication
+
+ ```bash
+-# Browser-based OAuth (interactive)
++# [MANUAL] Browser-based OAuth (interactive — opens browser for consent)
+ gws auth login
+
+-# Service Account
++# Service Account (no manual interaction required)
+ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+ ```
+
+diff --git a/src/auth_commands.rs b/src/auth_commands.rs
+index 852190a..b46843e 100644
+--- a/src/auth_commands.rs
++++ b/src/auth_commands.rs
+@@ -116,12 +116,12 @@ fn token_cache_path() -> PathBuf {
+ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
+     const USAGE: &str = concat!(
+         "Usage: gws auth <login|setup|status|export|logout>\n\n",
+-        "  login   Authenticate via OAuth2 (opens browser)\n",
++        "  login   [MANUAL] Authenticate via OAuth2 (opens browser for consent)\n",
+         "          --readonly   Request read-only scopes\n",
+         "          --full       Request all scopes incl. pubsub + cloud-platform\n",
+         "                       (may trigger restricted_client for unverified apps)\n",
+         "          --scopes     Comma-separated custom scopes\n",
+-        "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
++        "  setup   [MANUAL] Configure GCP project + OAuth client (requires gcloud)\n",
+         "          --project    Use a specific GCP project\n",
+         "  status  Show current authentication state\n",
+         "  export  Print decrypted credentials to stdout\n",
+@@ -159,7 +159,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
+     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+     {
+         Box::pin(async move {
+-            eprintln!("Open this URL in your browser to authenticate:\n");
++            eprintln!("[MANUAL] Open this URL in your browser to authenticate:\n");
+             eprintln!("  {url}\n");
+             Ok(String::new())
+         })
+@@ -341,8 +341,8 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
+         Err(_) => Err(GwsError::Auth(
+             "No OAuth client configured.\n\n\
+              Either:\n  \
+-               1. Run `gws auth setup` to configure a GCP project and OAuth client\n  \
+-               2. Download client_secret.json from Google Cloud Console and save it to:\n     \
++               1. [MANUAL] Run `gws auth setup` (interactive wizard, opens browser)\n  \
++               2. [MANUAL] Download client_secret.json from Google Cloud Console and save it to:\n     \       
+                   ~/.config/gws/client_secret.json\n  \
+                3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"
+                 .to_string(),
+diff --git a/src/error.rs b/src/error.rs
+index 25cc9f5..c68e350 100644
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -111,11 +111,11 @@ pub fn print_error_json(err: &GwsError) {
+     {
+         if reason == "accessNotConfigured" {
+             eprintln!();
+-            eprintln!("💡 API not enabled for your GCP project.");
++            eprintln!("💡 [MANUAL] API not enabled for your GCP project.");
+             if let Some(url) = enable_url {
+-                eprintln!("   Enable it at: {url}");
++                eprintln!("   [MANUAL] Enable it at: {url}");
+             } else {
+-                eprintln!("   Visit the GCP Console → APIs & Services → Library to enable the required API."); 
++                eprintln!("   [MANUAL] Visit the GCP Console → APIs & Services → Library to enable the required API.");
+             }
+             eprintln!("   After enabling, wait a few seconds and retry your command.");
+         }
+diff --git a/src/setup.rs b/src/setup.rs
+index b5757fa..46b28b0 100644
+--- a/src/setup.rs
++++ b/src/setup.rs
+@@ -907,7 +907,7 @@ fn stage_account(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+                             .unwrap()
+                             .suspend()
+                             .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+-                        eprintln!("  → Opening browser for login...");
++                        eprintln!("  → [MANUAL] Opening browser for login...");
+                         gcloud_auth_login()?;
+                         let acct = get_gcloud_account()?.ok_or_else(|| {
+                             GwsError::Auth("Authentication failed — no active account".to_string())
+@@ -1237,21 +1237,21 @@ fn manual_oauth_instructions(project_id: &str) -> String {
+
+     format!(
+         concat!(
+-            "OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
++            "[MANUAL] OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
+             "Follow these steps:\n\n",
+-            "1. Configure the OAuth consent screen (if not already done):\n",
++            "1. [MANUAL] Configure the OAuth consent screen (if not already done):\n",
+             "   {consent_url}\n",
+             "   → User Type: External\n",
+             "   → App name: gws CLI (or your preferred name)\n",
+             "   → Support email: your Google account email\n",
+             "   → Save and continue through all screens\n\n",
+-            "2. Create an OAuth client ID:\n",
++            "2. [MANUAL] Create an OAuth client ID:\n",
+             "   {creds_url}\n",
+             "   → Click 'Create Credentials' → 'OAuth client ID'\n",
+             "   → Application type: Desktop app\n",
+             "   → Name: gws CLI (or your preferred name)\n",
+             "   → Click 'Create'\n\n",
+-            "3. Copy the Client ID and Client Secret shown in the dialog.\n\n",
++            "3. [MANUAL] Copy the Client ID and Client Secret shown in the dialog.\n\n",
+             "4. Provide the credentials to gws using one of these methods:\n\n",
+             "   Option A — Environment variables (recommended for CI/scripts):\n",
+             "     export GOOGLE_WORKSPACE_CLI_CLIENT_ID=\"<your-client-id>\"\n",
+
 """
 
     files = parser.parse(diff_text)
-
+    
     for file in files:
         print("File:", file.file_name)
         print("Added:", file.total_added)
         print("Removed:", file.total_removed)
         print("Hunks:", len(file.hunks))
+        print("all hunks",file.hunks)
