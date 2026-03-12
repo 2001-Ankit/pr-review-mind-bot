@@ -4,9 +4,6 @@ from google import genai
 from app.llm.base import LLMProvider
 
 
-
-
-
 class GeminiProvider(LLMProvider):
     load_dotenv(override=True)
     def __init__(self):
@@ -20,9 +17,8 @@ class GeminiProvider(LLMProvider):
                       {user_prompt}
                       """
 
-        print("full prompt", full_prompt)
         response = self.client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=full_prompt
         )
         # print(response.text)

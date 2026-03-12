@@ -1,5 +1,7 @@
 import requests
-def fetch_pr_diff(pr_url: str) -> str:
+
+
+def fetch_pr_diff(pr_url: str, github_token: str = None) -> str:
     """
     Convert PR URL to .diff URL and download it
     """
@@ -13,6 +15,3 @@ def fetch_pr_diff(pr_url: str) -> str:
         raise Exception("Failed to fetch PR diff")
 
     return response.text
-
-diff = fetch_pr_diff("https://github.com/googleworkspace/cli/pull/110")
-print(diff)
