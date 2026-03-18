@@ -13,7 +13,7 @@ class ConfigError(Exception):
 class Config:
     """Manages application configuration from environment variables."""
     
-    SUPPORTED_PROVIDERS = ["gemini", "openai"]
+    SUPPORTED_PROVIDERS = ["gemini", "openai", "groq"]
     
     def __init__(self):
         """Initialize config and load environment variables."""
@@ -39,7 +39,7 @@ class Config:
         pass
     
     @property
-    def llm_provider(self) -> Literal["gemini", "openai"]:
+    def llm_provider(self) -> Literal["gemini", "openai", "groq"]:
         """Get the configured LLM provider (default: gemini)."""
         provider = os.getenv("LLM_PROVIDER", "gemini").lower()
         if provider not in self.SUPPORTED_PROVIDERS:
@@ -70,7 +70,17 @@ class Config:
                 "Get your key at: https://platform.openai.com/api-keys"
             )
         return key
-    
+    @property
+    def groq_api_key(self) -> str:
+        """Get Groq API key."""
+        key = os.getenv("GROQ_API_KEY")
+        if not key:
+            raise ConfigError(
+                "GROQ_API_KEY not found. Set it in .env file or as environment variable.\n"
+                "Get your key at: https://console.groq.com/keys"
+            )
+        return key
+
     @property
     def log_level(self) -> str:
         """Get logging level (default: INFO)."""
@@ -104,6 +114,8 @@ class Config:
             return self.gemini_api_key
         elif provider == "openai":
             return self.openai_api_key
+        elif provider == "groq":
+            return self.gemini_api_key
         else:
             raise ConfigError(f"Unknown provider: {provider}")
     

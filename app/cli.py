@@ -6,6 +6,7 @@ from app.core.diff_parser import DiffParser
 from app.engine.reviewer import Reviewer
 from app.config import get_config, ConfigError
 from app.integration.github import fetch_pr_diff
+from app.engine.test_case_generation import TestGenerator
 
 
 def flatten_hunks(files):
@@ -37,6 +38,25 @@ def chunk_blocks(blocks, config=None):
 
     return splitter.split_text(text)
 
+def extract_added_code(files):
+
+    added_blocks = []
+
+    for file in files:
+        for hunk in file.hunks:
+
+            if not hunk.added_lines:
+                continue
+
+            block = f"""
+FILE: {file.file_name}
+
+{'\n'.join(hunk.added_lines)}
+"""
+            added_blocks.append(block)
+
+    return added_blocks
+
 def main():
     parser = argparse.ArgumentParser(
         description="ReviewMindBot - Intelligent PR code review powered by AI"
@@ -45,10 +65,16 @@ def main():
     parser.add_argument("--pr", help="GitHub PR URL")
     parser.add_argument(
         "--provider",
-        choices=["gemini", "openai"],
+        choices=["gemini", "openai","groq"],
         help="LLM provider to use (overrides LLM_PROVIDER env var)"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    
+    parser.add_argument(
+    "--generate-tests",
+    action="store_true",
+    help="Generate unit test cases for newly added code"
+)
 
     args = parser.parse_args()
 
@@ -84,6 +110,9 @@ def main():
         elif provider == "openai":
             from app.llm.openai import OpenAIProvider
             llm = OpenAIProvider()
+        elif provider =="groq":
+            from app.llm.groq import GroqProvider
+            llm = GroqProvider()
         else:
             raise ConfigError(f"Unknown provider: {provider}")
 
@@ -157,6 +186,19 @@ def main():
         print(f"\n Summary: {len(all_findings)} issues found")
         print(f"   High: {len(by_severity['high'])}, Medium: {len(by_severity['medium'])}, Low: {len(by_severity['low'])}")
         logger.info(f"Review complete. Found {len(all_findings)} issues.")
+        if args.generate_tests:
+            print("===="*50)
+            print("Generate test cases")
+            print("===="*50)
+            test_generator = TestGenerator(llm)
+            added_code_block = extract_added_code(files)
+            if not added_code_block:
+                print("No code blocks were found")
+            else:
+                for block in added_code_block:
+                    logger.debug("Generating test cases")
+                    tests = test_generator.generate_tests(block)
+                    print(tests)
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
