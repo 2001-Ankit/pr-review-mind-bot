@@ -1,5 +1,4 @@
 import json
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .models import ReviewFindings
 
 
@@ -48,25 +47,8 @@ class Reviewer:
                 """
 
         response = self.llm.generate(system_prompt, user_prompt)
+        return self._parse_findings(response)
 
-        try:
-            data = json.loads(response)
-        except:
-            return []
-
-        findings = []
-
-        for item in data:
-            findings.append(
-                ReviewFindings(
-                    severity=item["severity"],
-                    category=item["category"],
-                    message=item["message"],
-                )
-            )
-
-        return findings
-    
     def review_chunk(self, chunk):
 
         system_prompt = """
@@ -92,20 +74,55 @@ class Reviewer:
             """
 
         response = self.llm.generate(system_prompt, user_prompt)
+        return self._parse_findings(response)
 
+    def review_file(self, file_change):
+        """Review a whole file when routing decides not to split by hunk."""
+        raw_lines = []
+        for hunk in file_change.hunks:
+            raw_lines.extend(hunk.raw_lines)
+
+        block = f"""
+        FILE: {file_change.file_name}
+        {'\n'.join(raw_lines)}
+        """
+        return self.review_chunk(block)
+
+    def _parse_findings(self, response):
+        """Parse and lightly validate an LLM JSON response."""
         try:
             data = json.loads(response)
-        except:
+        except json.JSONDecodeError:
+            return []
+
+        if not isinstance(data, list):
             return []
 
         findings = []
+        valid_severities = {"low", "medium", "high"}
+        valid_categories = {"bug", "refactor", "test", "security"}
 
         for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            severity = str(item.get("severity", "")).lower().strip()
+            category = str(item.get("category", "")).lower().strip()
+            message = str(item.get("message", "")).strip()
+
+            if severity not in valid_severities:
+                continue
+            if category not in valid_categories:
+                continue
+            if not message:
+                continue
+
             findings.append(
                 ReviewFindings(
-                    severity=item["severity"],
-                    category=item["category"],
-                    message=item["message"],
+                    severity=severity,
+                    category=category,
+                    message=message,
+                    file_name=item.get("file_name"),
                 )
             )
 

@@ -106,6 +106,11 @@ class Config:
             return int(os.getenv("CHUNK_OVERLAP", "50"))
         except ValueError:
             raise ConfigError("CHUNK_OVERLAP must be an integer")
+
+    @property
+    def github_token(self) -> str | None:
+        """Get optional GitHub token for private PR access and rate limits."""
+        return os.getenv("GITHUB_TOKEN")
     
     def validate_provider_api_key(self, provider: str) -> str:
         """Validate and return API key for the given provider."""
@@ -115,7 +120,7 @@ class Config:
         elif provider == "openai":
             return self.openai_api_key
         elif provider == "groq":
-            return self.gemini_api_key
+            return self.groq_api_key
         else:
             raise ConfigError(f"Unknown provider: {provider}")
     

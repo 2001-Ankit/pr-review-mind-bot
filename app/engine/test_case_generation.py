@@ -4,11 +4,13 @@ from pydantic import BaseModel
 
 
 class TestCase(BaseModel):
+  __test__ = False
   test_name: str
   description:str
   
 
 class TestGenerator:
+    __test__ = False
     def __init__(self, llm):
         self.llm = llm
 
