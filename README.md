@@ -242,6 +242,30 @@ ruff check .
 CI builds the wheel, installs it in a clean venv, and runs the console script —
 the check that would have caught the broken `0.1.0` release.
 
+### Releasing
+
+1. Bump the version in `pyproject.toml` and `src/reviewmindbot/__init__.py`
+   (a test fails if they disagree) and add a `CHANGELOG.md` entry.
+2. Commit, then tag and push:
+
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+   ```
+
+   The publish workflow refuses to upload if the tag and `pyproject.toml`
+   version disagree, and only runs after the full CI matrix passes. Upload uses
+   PyPI Trusted Publishing — there is no API token in the repository.
+
+3. **Repoint the Action's major tag**, or everyone using `@v1` stays on the
+   previous release:
+
+   ```bash
+   git tag -f v1 vX.Y.Z^{} && git push origin v1 --force
+   ```
+
+   `v1` tracks the Action's interface, not the package version, which is why it
+   sits above a `0.x` release.
+
 ## Upgrading
 
 See [CHANGELOG.md](CHANGELOG.md). `0.2.0` renamed the importable package from
