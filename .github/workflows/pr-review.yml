@@ -1,0 +1,30 @@
+# Dogfooding: ReviewMindBot reviews its own pull requests using the action in
+# this repository. Copy this file into your own repo to get the same thing.
+name: PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Forked PRs get a read-only token, so posting comments would fail.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          provider: gemini
+          api-key: ${{ secrets.GEMINI_API_KEY }}
+          budget-usd: "0.50"
+          fail-on: none

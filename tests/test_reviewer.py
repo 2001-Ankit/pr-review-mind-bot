@@ -1,55 +1,103 @@
-from app.engine.reviewer import Reviewer
+from conftest import StubLLM
+from reviewmindbot.core.chunking import Chunk
+from reviewmindbot.engine.reviewer import Reviewer
 
 
-class StubLLM:
-    def __init__(self, response):
-        self.response = response
-
-    def generate(self, system_prompt, user_prompt):
-        return self.response
+def review(response: str, files=("demo.py",)):
+    return Reviewer(StubLLM(response)).review(Chunk(text="diff", files=list(files)))
 
 
-def test_review_chunk_filters_invalid_items():
-    reviewer = Reviewer(
-        StubLLM(
-            """
-            [
-              {"severity": "HIGH", "category": "bug", "message": "Null check is missing"},
-              {"severity": "critical", "category": "bug", "message": "bad severity"},
-              {"severity": "low", "category": "typo", "message": "bad category"},
-              {"severity": "medium", "category": "test", "message": ""}
-            ]
-            """
-        )
+def test_valid_findings_are_parsed():
+    findings = review(
+        """[
+          {"severity": "HIGH", "category": "bug", "message": "Null check is missing",
+           "file_name": "demo.py", "line": 12, "suggestion": "Guard against None"}
+        ]"""
     )
-
-    findings = reviewer.review_chunk("some diff")
 
     assert len(findings) == 1
     assert findings[0].severity == "high"
     assert findings[0].category == "bug"
-    assert findings[0].message == "Null check is missing"
+    assert findings[0].file_name == "demo.py"
+    assert findings[0].line == 12
+    assert findings[0].suggestion == "Guard against None"
 
 
-def test_review_chunk_returns_empty_on_invalid_json():
-    reviewer = Reviewer(StubLLM("not-json"))
-
-    assert reviewer.review_chunk("some diff") == []
-
-
-def test_review_file_uses_hunks_as_context():
-    reviewer = Reviewer(
-        StubLLM('[{"severity": "low", "category": "refactor", "message": "Extract helper"}]')
+def test_invalid_severity_category_or_message_is_dropped():
+    findings = review(
+        """[
+          {"severity": "critical", "category": "bug", "message": "bad severity"},
+          {"severity": "low", "category": "typo", "message": "bad category"},
+          {"severity": "medium", "category": "test", "message": ""}
+        ]"""
     )
 
-    class Hunk:
-        raw_lines = ["+value = 1"]
+    assert findings == []
 
-    class FileChange:
-        file_name = "demo.py"
-        hunks = [Hunk()]
 
-    findings = reviewer.review_file(FileChange())
+def test_markdown_fenced_json_is_still_parsed():
+    """Models wrap JSON in fences constantly; discarding it loses real findings."""
+    findings = review(
+        '```json\n[{"severity": "low", "category": "style", "message": "Nit"}]\n```'
+    )
 
     assert len(findings) == 1
-    assert findings[0].category == "refactor"
+    assert findings[0].message == "Nit"
+
+
+def test_json_with_surrounding_prose_is_recovered():
+    findings = review(
+        'Here is the review:\n[{"severity": "high", "category": "security", '
+        '"message": "Hardcoded secret"}]\nHope that helps.'
+    )
+
+    assert len(findings) == 1
+    assert findings[0].category == "security"
+
+
+def test_object_wrapper_is_unwrapped():
+    findings = review(
+        '{"findings": [{"severity": "low", "category": "refactor", "message": "Extract"}]}'
+    )
+
+    assert len(findings) == 1
+
+
+def test_unparseable_response_yields_no_findings():
+    assert review("I could not review this.") == []
+
+
+def test_single_file_chunk_attributes_findings_automatically():
+    """Without this the file_name was almost always null in the output."""
+    findings = review(
+        '[{"severity": "low", "category": "refactor", "message": "Extract helper"}]',
+        files=("only.py",),
+    )
+
+    assert findings[0].file_name == "only.py"
+
+
+def test_multi_file_chunk_leaves_unclaimed_findings_unattributed():
+    findings = review(
+        '[{"severity": "low", "category": "refactor", "message": "Extract helper"}]',
+        files=("a.py", "b.py"),
+    )
+
+    assert findings[0].file_name is None
+
+
+def test_model_reported_path_is_matched_against_the_chunk():
+    findings = review(
+        '[{"severity": "low", "category": "bug", "message": "x", "file_name": "mod.py"}]',
+        files=("src/pkg/mod.py", "other.py"),
+    )
+
+    assert findings[0].file_name == "src/pkg/mod.py"
+
+
+def test_bogus_line_numbers_are_discarded():
+    findings = review(
+        '[{"severity": "low", "category": "bug", "message": "x", "line": "not-a-line"}]'
+    )
+
+    assert findings[0].line is None

@@ -1,0 +1,156 @@
+name: ReviewMindBot
+description: LLM-powered pull request review that comments findings directly on the diff
+author: Ankit Rai
+
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  provider:
+    description: LLM provider - gemini, openai or groq
+    required: false
+    default: gemini
+  model:
+    description: Model name; defaults to the provider's default
+    required: false
+  api-key:
+    description: >-
+      API key for the chosen provider. Pass a secret, e.g.
+      ${{ secrets.GEMINI_API_KEY }}.
+    required: true
+  github-token:
+    description: >-
+      Token used to read the PR and post comments. The default GITHUB_TOKEN
+      works; the job needs `permissions: pull-requests: write`.
+    required: false
+    default: ${{ github.token }}
+  comment:
+    description: Post findings to the PR (inline comments plus a summary)
+    required: false
+    default: "true"
+  inline:
+    description: Include inline comments on changed lines
+    required: false
+    default: "true"
+  fail-on:
+    description: Fail the job when a finding of this severity or higher exists - none, low, medium, high
+    required: false
+    default: none
+  budget-usd:
+    description: Stop before exceeding this spend. Empty means no limit.
+    required: false
+    default: "1.00"
+  max-chunk-size:
+    description: Characters of diff per model request
+    required: false
+    default: "12000"
+  pr-url:
+    description: PR to review; defaults to the PR that triggered the workflow
+    required: false
+  version:
+    description: Version of reviewmindbot to install (a PyPI specifier)
+    required: false
+    default: ""
+
+outputs:
+  total:
+    description: Total number of findings
+    value: ${{ steps.review.outputs.total }}
+  high:
+    description: Number of high-severity findings
+    value: ${{ steps.review.outputs.high }}
+  cost-usd:
+    description: Estimated cost of the run in USD
+    value: ${{ steps.review.outputs.cost-usd }}
+  result-json:
+    description: Path to the full result as JSON
+    value: ${{ steps.review.outputs.result-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install ReviewMindBot
+      shell: bash
+      run: |
+        set -euo pipefail
+        spec="reviewmindbot[${{ inputs.provider }}]${{ inputs.version }}"
+        # Running from a checkout of this repo installs the local source so the
+        # action always matches the code it ships with.
+        if [ -f "${{ github.action_path }}/pyproject.toml" ]; then
+          python -m pip install --quiet "${{ github.action_path }}[${{ inputs.provider }}]"
+        else
+          python -m pip install --quiet "$spec"
+        fi
+
+    - name: Review
+      id: review
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.provider == 'gemini' && inputs.api-key || '' }}
+        OPENAI_API_KEY: ${{ inputs.provider == 'openai' && inputs.api-key || '' }}
+        GROQ_API_KEY: ${{ inputs.provider == 'groq' && inputs.api-key || '' }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        MAX_CHUNK_SIZE: ${{ inputs.max-chunk-size }}
+      run: |
+        set -uo pipefail
+
+        pr_url="${{ inputs.pr-url }}"
+        if [ -z "$pr_url" ]; then
+          pr_url="${{ github.event.pull_request.html_url }}"
+        fi
+        if [ -z "$pr_url" ]; then
+          echo "::error::No pull request URL. Run this on a pull_request event or set the pr-url input."
+          exit 1
+        fi
+
+        args=(--pr "$pr_url" --provider "${{ inputs.provider }}" --output json)
+        [ -n "${{ inputs.model }}" ] && args+=(--model "${{ inputs.model }}")
+        [ -n "${{ inputs.budget-usd }}" ] && args+=(--budget-usd "${{ inputs.budget-usd }}")
+        [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+        [ "${{ inputs.inline }}" != "true" ] && args+=(--no-inline)
+        [ "${{ inputs.fail-on }}" != "none" ] && args+=(--fail-on "${{ inputs.fail-on }}")
+
+        reviewmindbot "${args[@]}" > result.json
+        status=$?
+
+        # Exit 1 is a real failure; exit 2 is the --fail-on gate and still
+        # produced a usable result, so the outputs are published either way.
+        if [ "$status" != "0" ] && [ "$status" != "2" ]; then
+          cat result.json >&2 || true
+          echo "::error::ReviewMindBot failed. See the log above."
+          exit 1
+        fi
+
+        python - <<'PY' >> "$GITHUB_OUTPUT"
+        import json, os, pathlib
+        data = json.loads(pathlib.Path("result.json").read_text(encoding="utf-8"))
+        summary = data.get("summary", {})
+        usage = data.get("usage") or {}
+        print(f"total={summary.get('total', 0)}")
+        print(f"high={summary.get('high', 0)}")
+        print(f"cost-usd={usage.get('cost_usd') or 0}")
+        print(f"result-json={os.path.abspath('result.json')}")
+        PY
+
+        python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+        import json, pathlib
+        data = json.loads(pathlib.Path("result.json").read_text(encoding="utf-8"))
+        s, usage = data.get("summary", {}), data.get("usage") or {}
+        print("## ReviewMindBot\n")
+        print(f"**{s.get('total', 0)}** finding(s) across {s.get('files_reviewed', 0)} file(s)\n")
+        print(f"| Severity | Count |\n| --- | --- |")
+        for level in ("high", "medium", "low"):
+            print(f"| {level} | {s.get(level, 0)} |")
+        if not s.get("complete", True):
+            print("\n> Partial review - some chunks were skipped or failed.")
+        if usage.get("cost_usd"):
+            print(f"\n<sub>{usage.get('total_tokens', 0):,} tokens, ~${usage['cost_usd']:.4f}</sub>")
+        PY
+
+        exit $status

@@ -1,4 +1,9 @@
 include LICENSE
 include README.md
+include CHANGELOG.md
 include .env.example
-recursive-include app *.py
+include action.yml
+recursive-include src/reviewmindbot *.py *.diff py.typed
+recursive-include tests *.py
+prune .github
+global-exclude __pycache__ *.py[cod] *.log

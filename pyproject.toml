@@ -1,42 +1,79 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reviewmindbot"
-version = "0.1.0"
-description = "Intelligent pull request code review tool powered by LLM providers that automatically analyzes diffs and provides actionable feedback"
+version = "0.3.0"
+description = "LLM-powered pull request code review that turns a diff into actionable, severity-ranked findings"
 readme = "README.md"
-requires-python = ">=3.12"
-license = {text = "MIT"}
-authors = [
-    {name = "Ankit Rai", email = "raia85859@gmail.com"}
-]
-keywords = ["code-review", "ai", "llm", "github", "diff-analysis"]
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ankit Rai", email = "raia85859@gmail.com" }]
+keywords = ["code-review", "ai", "llm", "github", "diff", "pull-request", "ci"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
 ]
+
+# Only what every run needs. Provider SDKs are extras so installing this tool
+# does not drag in three vendors' clients for the one you actually use.
 dependencies = [
     "python-dotenv>=1.0.0",
-    "langchain-core>=1.2.0",
-    "langchain-text-splitters>=1.1.0",
-    "google-genai>=1.0.0",
-    "openai>=2.0.0",
-    "pydantic>=2.0.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "black>=22.0", "ruff>=0.1.0"]
+gemini = ["google-genai>=1.0.0"]
+openai = ["openai>=1.40.0"]
+groq = ["openai>=1.40.0"]
+all = ["google-genai>=1.0.0", "openai>=1.40.0"]
+dev = [
+    "reviewmindbot[all]",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.5.0",
+    "build>=1.0",
+    "twine>=5.0",
+    # Used only to assert that action.yml stays consistent with the CLI.
+    "pyyaml>=6.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/2001-Ankit/pr-review-mind-bot"
 Repository = "https://github.com/2001-Ankit/pr-review-mind-bot"
 Issues = "https://github.com/2001-Ankit/pr-review-mind-bot/issues"
+Changelog = "https://github.com/2001-Ankit/pr-review-mind-bot/blob/main/CHANGELOG.md"
 
 [project.scripts]
-reviewmindbot = "app.cli:main"
+reviewmindbot = "reviewmindbot.cli:main"
+
+# Explicit discovery. The previous build relied on flat-layout auto-discovery,
+# which shipped a top-level `app` package -- a name generic enough to collide
+# with anything else in site-packages.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["reviewmindbot*"]
+
+[tool.setuptools.package-data]
+reviewmindbot = ["py.typed", "examples/*.diff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

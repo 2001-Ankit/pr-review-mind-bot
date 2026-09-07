@@ -1,260 +1,262 @@
 # ReviewMindBot
 
-An intelligent pull request code review tool powered by LLM providers that automatically analyzes diffs and provides actionable feedback on code changes.
+LLM-powered pull request review. It reads the diff, finds real problems, and
+comments them **on the lines that caused them** — with a spend cap, a response
+cache, and a CI exit code you can gate on.
 
-## Features
+## Use it on your pull requests
 
-- **Automated PR Review**: Analyzes pull request diffs using AI-powered code review
-- **Multi-LLM Support**: Integrates with multiple LLM providers (Gemini, OpenAI)
-- **Smart Diff Parsing**: Parses unified diff format with support for hunks, added/removed lines, and context
-- **GitHub Integration**: Fetch and review diffs directly from GitHub PRs
-- **Intelligent Chunking**: Breaks large diffs into manageable chunks for better analysis
-- **Categorized Findings**: Issues categorized by severity (low/medium/high) and type (bug/refactor/test/security)
-- **Modular Architecture**: Extensible design with separate components for parsing, reviewing, routing, and aggregation
+Drop this into `.github/workflows/pr-review.yml`:
 
-## Project Structure
+```yaml
+name: PR Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
 
-```
-reviewmindbot/
-├── app/
-│   ├── cli.py                 # Command-line interface
-│   ├── core/
-│   │   └── diff_parser.py     # Unified diff format parser
-│   ├── engine/
-│   │   ├── orchestrator.py    # Coordinates review workflow
-│   │   ├── reviewer.py        # Performs code review analysis
-│   │   ├── router.py          # Routes files/hunks to appropriate handlers
-│   │   ├── aggregator.py      # Aggregates review findings
-│   │   ├── file_router.py     # File-specific routing logic
-│   │   └── models.py          # Data models for review results
-│   ├── llm/
-│   │   ├── base.py            # Abstract LLM provider base class
-│   │   ├── gemini.py          # Google Gemini implementation
-│   │   └── openai.py          # OpenAI API implementation
-│   ├── integration/
-│   │   └── github.py          # GitHub PR integration
-│   └── examples/
-│       └── simple_change.diff # Example diff file
-├── main.py                    # Entry point
-├── pyproject.toml             # Project configuration
-└── README.md                  # This file
+permissions:
+  contents: read
+  pull-requests: write   # required to post comments
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: 2001-Ankit/pr-review-mind-bot@v1
+        with:
+          provider: gemini
+          api-key: ${{ secrets.GEMINI_API_KEY }}
+          budget-usd: "0.50"
 ```
 
-## Installation
+That's the whole setup. Add `GEMINI_API_KEY` (or `OPENAI_API_KEY` /
+`GROQ_API_KEY`) to your repository secrets and open a PR.
 
-### Prerequisites
+Every run posts **inline comments** on the changed lines plus **one summary
+comment**, which is edited in place on each push rather than piling up.
 
-- Python >=3.12
-- pip or uv package manager
+### Action inputs
 
-### Setup
+| Input | Default | Description |
+| --- | --- | --- |
+| `api-key` | *required* | Key for the chosen provider |
+| `provider` | `gemini` | `gemini`, `openai` or `groq` |
+| `model` | provider default | Override the model |
+| `github-token` | `${{ github.token }}` | Needs `pull-requests: write` |
+| `comment` | `true` | Post findings to the PR |
+| `inline` | `true` | Include inline comments on changed lines |
+| `fail-on` | `none` | Fail the job at `low`/`medium`/`high` findings |
+| `budget-usd` | `1.00` | Stop before exceeding this spend |
+| `max-chunk-size` | `12000` | Characters of diff per request |
+| `pr-url` | triggering PR | Review a specific PR instead |
+
+### Action outputs
+
+`total`, `high`, `cost-usd`, and `result-json` (path to the full JSON result),
+so you can branch on the result in later steps.
+
+> **Forked PRs** get a read-only token from GitHub, so comment posting will
+> fail. Guard the job with
+> `if: github.event.pull_request.head.repo.full_name == github.repository`,
+> as in [`.github/workflows/pr-review.yml`](.github/workflows/pr-review.yml).
+
+## Use it from the terminal
 
 ```bash
-# Clone the repository
-git clone https://github.com/2001-Ankit/pr-review-mind-bot.git
-cd reviewmindbot
-
-# Install dependencies
-pip install -e .
+pip install "reviewmindbot[gemini]"   # or [openai], [groq], [all]
+export GEMINI_API_KEY=...
 ```
-
-## Configuration
-
-### LLM Provider Setup
-
-Before using ReviewMindBot, configure your preferred LLM provider:
-
-#### Google Gemini
 
 ```bash
-# Set your API key as an environment variable
-export GEMINI_API_KEY="your-api-key-here"
+# A diff file, or straight from git
+reviewmindbot changes.diff
+git diff main | reviewmindbot -
+
+# A GitHub PR - review it, and post the findings back to it
+reviewmindbot --pr https://github.com/owner/repo/pull/123
+reviewmindbot --pr https://github.com/owner/repo/pull/123 --comment
+
+# See what a review would cost before running it
+reviewmindbot changes.diff --estimate
+
+# Cap the spend; a run that hits the cap reports partial results
+reviewmindbot changes.diff --budget-usd 0.25
+
+# Machine-readable, or ready to paste into a PR
+reviewmindbot changes.diff --output json
+reviewmindbot changes.diff --output markdown
+
+# Draft tests for newly added code
+reviewmindbot changes.diff --generate-tests
 ```
 
-#### OpenAI
+Requires Python 3.11+.
 
-```bash
-# Set your API key as an environment variable
-export OPENAI_API_KEY="your-api-key-here"
-```
+### Configuration
 
-## Usage
+Environment variables, or a `.env` file at or above your working directory
+(see [.env.example](.env.example)):
 
-### Command-Line Interface
+| Provider | Variable | Get a key |
+| --- | --- | --- |
+| `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | <https://aistudio.google.com/apikey> |
+| `openai` | `OPENAI_API_KEY` | <https://platform.openai.com/api-keys> |
+| `groq` | `GROQ_API_KEY` | <https://console.groq.com/keys> |
 
-#### Review a Local Diff File
+### Exit codes
 
-```bash
-python -m app.cli path/to/your/diff/file.diff
-```
+| Code | Meaning |
+| --- | --- |
+| `0` | Ran successfully |
+| `1` | Error (bad config, unreachable provider, missing file) |
+| `2` | Findings met the `--fail-on` threshold |
 
-#### Review a GitHub Pull Request
+`--fail-on` is off by default, so findings alone never fail your build.
 
-```bash
-python -m app.cli --pr https://github.com/owner/repo/pull/123
-```
+## Cost control
 
-### Example
+An LLM tool that runs on every PR has an unbounded bill by default. Three
+things keep it bounded:
 
-```bash
-# Review the included example diff
-python -m app.cli app/examples/simple_change.diff
-```
+- **`--estimate`** reports projected requests, tokens and cost without calling
+  the model at all.
+- **`--budget-usd`** is checked *before* each request, so it is a limit and not
+  a post-mortem. Hitting it produces a clearly-labelled partial review rather
+  than a failure — you still get the findings that were paid for.
+- **A response cache** (SQLite, per-user, 14-day TTL) means a workflow re-run,
+  a retried flaky job, or a push that touches one file out of thirty only pays
+  for what actually changed. Keys cover the provider, model, prompt and review
+  contract, so a model switch or a prompt change can never serve a stale
+  answer. `--no-cache` bypasses it, `--clear-cache` empties it.
 
-### Output
+Every run reports what it spent, in the text output, the JSON `usage` block,
+and the PR comment footer. Unpriced models report `null` rather than pretending
+to be free.
 
-The tool outputs review findings in the following format:
+Noise is filtered before any tokens are spent: lockfiles, minified bundles,
+binaries and deleted files never reach the model.
 
-```
-=== Review Results ===
-
-[HIGH] bug - Variable 'x' used before definition on line 5
-[MEDIUM] refactor - Consider extracting this function for better readability
-[LOW] test - Missing unit test for edge case
-[HIGH] security - SQL injection vulnerability detected in query string
-```
-
-## How It Works
-
-1. **Diff Parsing**: Reads unified diff format and extracts file changes, hunks, and line information
-2. **Chunking**: Splits large diffs into smaller chunks using recursive character splitting (500 chars, 50 char overlap)
-3. **LLM Analysis**: Sends chunks to the LLM with a system prompt asking for structured code review feedback
-4. **JSON Parsing**: Parses LLM responses into structured finding objects
-5. **Aggregation**: Combines findings from all chunks and returns categorized results
-6. **Reporting**: Displays findings sorted by severity
-
-## API Components
-
-### DiffParser
-
-Parses unified diff format into structured FileChange objects with hunks and line information.
+## As a library
 
 ```python
-from app.core.diff_parser import DiffParser
+from reviewmindbot import api
 
-parser = DiffParser()
-files = parser.parse(diff_text)
+result = api.review_diff(open("changes.diff").read())
+
+for finding in result.findings:
+    print(finding.severity, f"{finding.file_name}:{finding.line}", finding.message)
+
+print(result.usage)        # {'requests': 3, 'total_tokens': 8421, 'cost_usd': 0.0021, ...}
+print(result.complete)     # False if the budget stopped it early
 ```
 
-### Reviewer
-
-Analyzes code chunks using an LLM provider.
+Review a PR and publish the result in one call:
 
 ```python
-from app.engine.reviewer import Reviewer
-from app.llm.gemini import GeminiProvider
-
-llm = GeminiProvider()
-reviewer = Reviewer(llm)
-findings = reviewer.review_chunk(code_chunk)
+result, outcome = api.review_pull_request(
+    "https://github.com/owner/repo/pull/123",
+    publish=True,
+)
+print(outcome.describe())  # "summary comment updated, 4 inline comment(s) posted"
 ```
 
-### LLM Providers
-
-All providers implement the `LLMProvider` base class:
+Lower-level pieces work on their own:
 
 ```python
-from app.llm.base import LLMProvider
+from reviewmindbot.core import DiffParser, build_chunks
+from reviewmindbot.engine import Orchestrator, Reviewer, FileRouter
+from reviewmindbot.llm import create_provider
 
-provider = GeminiProvider()  # or OpenAIProvider()
-response = provider.generate(system_prompt, user_prompt)
+files = DiffParser().parse(diff_text)
+chunks = build_chunks(FileRouter().select(files), max_chunk_size=12000)
 ```
-
-## Data Models
-
-### Hunk
-
-Represents a single diff hunk:
-
-- `header`: Hunk header line
-- `raw_lines`: Original diff lines
-- `added_lines`: Lines added in this hunk
-- `removed_lines`: Lines removed in this hunk
-- `context_lines`: Unchanged context lines
-
-### FileChange
-
-Represents changes to a single file:
-
-- `file_name`: Path to the file
-- `hunks`: List of Hunk objects
-- `total_added`: Total lines added
-- `total_removed`: Total lines removed
-- `is_new`: Whether this is a new file
-- `is_deleted`: Whether this file was deleted
-
-### ReviewFinding
-
-Represents a single review issue:
-
-- `severity`: low | medium | high
-- `category`: bug | refactor | test | security
-- `message`: Actionable feedback
 
 ## Architecture
 
-ReviewMindBot uses a modular, extensible architecture:
-
-- **Separations of Concerns**: Parsing, reviewing, routing, and aggregation are independent
-- **Provider Pattern**: LLM implementations are pluggable via the provider interface
-- **Orchestrator Pattern**: The Orchestrator coordinates the review workflow
-- **Router Pattern**: FileRouter determines how to handle different files/hunks
-
-## Contributing
-
-Contributions are welcome! The modular design makes it easy to:
-
-- Add new LLM providers (extend `LLMProvider`)
-- Improve diff parsing (enhance `DiffParser`)
-- Add file-specific logic (enhance `FileRouter`)
-- Implement new aggregation strategies (extend `Aggregator`)
-
-## Technologies Used
-
-- **Python 3.12+**: Core language
-- **LangChain**: Text splitting and LLM abstraction
-- **Google Gemini API**: LLM provider
-- **OpenAI API**: LLM provider
-- **GitHub API**: PR integration
-
-## Requirements
-
-```toml
-[project]
-name = "reviewmindbot"
-version = "0.1.0"
-description = "Intelligent PR review bot powered by LLMs"
-requires-python = ">=3.12"
-dependencies = [
-    "langchain",
-    "langchain-text-splitters",
-    "google-generativeai",  # For Gemini
-    "openai",              # For OpenAI
-    "requests"             # For GitHub integration
-]
 ```
+reviewmindbot/
+├── cli.py            argument parsing and exit codes only
+├── api.py            programmatic entry points
+├── config.py         env → immutable Config, resolved once
+├── errors.py         one exception hierarchy the CLI knows how to print
+├── usage.py          token accounting, pricing, budget enforcement
+├── cache.py          SQLite response cache, best-effort by design
+├── core/
+│   ├── diff_parser.py   unified diff → FileChange/Hunk, with new-file line numbers
+│   └── chunking.py      hunks → model-sized Chunks that remember their files
+├── engine/
+│   ├── file_router.py   drops binaries, lockfiles, deleted files
+│   ├── reviewer.py      Chunk → Findings; cache lookup and budget check
+│   ├── aggregator.py    dedupe across overlapping chunks, sort by severity
+│   ├── orchestrator.py  route → chunk → review in parallel → aggregate
+│   ├── test_generator.py
+│   ├── models.py        Finding, ReviewResult, Severity, Category
+│   └── prompts.py
+├── llm/
+│   ├── base.py       LLMProvider ABC + retry/backoff + usage accounting
+│   ├── factory.py    name → client registry
+│   ├── gemini.py
+│   └── openai.py     OpenAIProvider and Groq (OpenAI-compatible)
+├── integration/
+│   ├── github.py     REST client: fetch diffs, upsert comments, post reviews
+│   └── publisher.py  ReviewResult → PR comments, with line validation
+└── reporting/
+    └── formatters.py text / json / markdown
+```
+
+**Adding a provider** is one entry in `llm/factory.PROVIDERS` plus one in
+`config.PROVIDER_KEY_ENV_VARS`. The CLI's `--provider` choices, config
+validation, and the Action's key wiring all derive from those tables — and a
+test fails if you add a provider without wiring its key into `action.yml`.
+
+**Adding an output format** is one function in `reporting/formatters.FORMATTERS`.
+
+## Behaviour worth knowing
+
+- **Findings carry a file and a line.** Chunks are rendered with a line-number
+  gutter, so the model cites real line numbers instead of guessing.
+- **Inline comments are validated against the diff.** GitHub rejects an entire
+  review if one comment names a line outside the diff, so anything
+  unverifiable is deliberately routed to the summary instead. A rejected
+  review degrades to a summary-only comment; no finding is ever lost.
+- **The summary comment is edited, not re-posted** — a bot that appends on
+  every push buries the conversation it exists to support.
+- **A failed chunk does not sink the run.** The others still report, and both
+  the summary and the JSON say the review was partial.
+- **Transient errors (429/5xx/timeouts) are retried** with backoff; permanent
+  ones (bad key, unknown model) fail immediately instead of burning quota.
+- **Overlapping chunks are de-duplicated** before output.
+- **Logs go to a per-user state directory**, not your working directory, and an
+  unwritable log path never stops a review.
+
+## Development
+
+```bash
+git clone https://github.com/2001-Ankit/pr-review-mind-bot.git
+cd pr-review-mind-bot
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
+
+CI builds the wheel, installs it in a clean venv, and runs the console script —
+the check that would have caught the broken `0.1.0` release.
+
+## Upgrading
+
+See [CHANGELOG.md](CHANGELOG.md). `0.2.0` renamed the importable package from
+`app` to `reviewmindbot` and moved provider SDKs to extras; `0.3.0` is additive
+on top of that.
 
 ## Roadmap
 
-- [ ] Add support for more LLM providers (Claude, Llama)
-- [ ] Implement caching for repeated reviews
-- [ ] Add webhook integration for automatic PR reviews
-- [ ] Create GitHub Action for CI/CD integration
-- [ ] Add support for custom review rules and policies
-- [ ] Add metrics and reporting
+- [x] Post findings as inline PR review comments
+- [x] Cache reviews to avoid paying twice for the same diff
+- [x] Ship a ready-made GitHub Action
+- [ ] Custom rule packs and per-repo policies (`.reviewmindbot.yml`)
+- [ ] Incremental review of only the commits added since the last run
+- [ ] Anthropic Claude provider
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Author
-
-[2001-Ankit](https://github.com/2001-Ankit)
-
-## Support
-
-For issues, questions, or contributions, please open an issue on [GitHub](https://github.com/2001-Ankit/pr-review-mind-bot).
-
----
-
-**Made with ❤️ for better code reviews**
+MIT — see [LICENSE](LICENSE).

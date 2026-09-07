@@ -1,25 +1,171 @@
-name: ReviewMindBot CI
+name: CI
 
 on:
   push:
-    branches: [diff-parser, main, master]
+    branches: [main, master, diff-parser]
   pull_request:
-    branches: [diff-parser, main, master]
+  workflow_dispatch:
+  # Lets the publish workflow reuse this as a release gate.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
+
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: Install dependencies
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-      - name: Run tests
-        run: pytest
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest --cov=reviewmindbot --cov-report=term-missing
+
+  # The failure that shipped v0.1.0 was invisible to the test suite: nothing
+  # ever installed the built wheel and ran it the way a user would.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check metadata
+        run: twine check --strict dist/*
+
+      - name: Install the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install "$(ls dist/*.whl)[all]"
+
+      - name: Smoke test the installed console script
+        run: |
+          /tmp/smoke/bin/reviewmindbot --version
+          /tmp/smoke/bin/reviewmindbot --help
+
+      - name: Estimate mode must not need an API key or spend anything
+        run: |
+          example="$(/tmp/smoke/bin/python -c 'from reviewmindbot.examples import example_path; print(example_path())')"
+          /tmp/smoke/bin/reviewmindbot "$example" --estimate | tee estimate.txt
+          grep -q "Estimated cost:" estimate.txt
+
+      - name: Verify the installed package is importable and self-contained
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          import importlib, sys
+          from pathlib import Path
+
+          for module in (
+              "reviewmindbot.api",
+              "reviewmindbot.cli",
+              "reviewmindbot.core.chunking",
+              "reviewmindbot.engine.orchestrator",
+              "reviewmindbot.integration.github",
+              "reviewmindbot.llm.factory",
+              "reviewmindbot.reporting.formatters",
+          ):
+              importlib.import_module(module)
+
+          # Package data must survive the build.
+          from reviewmindbot.examples import example_path
+          assert example_path().is_file(), "bundled example diff is missing"
+
+          # No generically-named top-level package may be installed.
+          try:
+              importlib.import_module("app")
+          except ModuleNotFoundError:
+              pass
+          else:
+              sys.exit("a top-level 'app' package was installed")
+
+          print("installed package verified")
+          PY
+
+      - name: End-to-end run against the bundled example
+        env:
+          GEMINI_API_KEY: not-a-real-key
+        run: |
+          set +e
+          /tmp/smoke/bin/reviewmindbot \
+            "$(/tmp/smoke/bin/python -c 'from reviewmindbot.examples import example_path; print(example_path())')" \
+            > out.txt 2>&1
+          code=$?
+          cat out.txt
+          # Exit 1 with a clean message is correct here; a traceback is not.
+          test "$code" = "1" || { echo "expected exit 1, got $code"; exit 1; }
+          grep -q "Traceback" out.txt && { echo "leaked a traceback"; exit 1; }
+          echo "error handling verified"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # The Action is how most people will consume this, and it is the one part
+  # that cannot be covered by importing the package.
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate action.yml
+        run: |
+          python -m pip install --upgrade pip pyyaml
+          python - <<'PY'
+          import pathlib, sys, yaml
+
+          action = yaml.safe_load(pathlib.Path("action.yml").read_text(encoding="utf-8"))
+
+          assert action["runs"]["using"] == "composite", "must stay a composite action"
+          assert action["inputs"]["api-key"]["required"] is True
+          assert "default" not in action["inputs"]["api-key"], "no baked-in credential"
+
+          declared = set(action["outputs"])
+          assert {"total", "high", "cost-usd", "result-json"} <= declared, declared
+
+          # Every shell step must parse.
+          for step in action["runs"]["steps"]:
+              if "run" in step:
+                  assert step.get("shell"), f"step {step.get('name')!r} has no shell"
+
+          print("action.yml valid")
+          PY
+
+      - name: Shell-check the action's scripts
+        run: |
+          python - <<'PY' > /tmp/steps.sh
+          import pathlib, yaml
+          action = yaml.safe_load(pathlib.Path("action.yml").read_text(encoding="utf-8"))
+          for step in action["runs"]["steps"]:
+              if step.get("shell") == "bash":
+                  # GitHub expressions are opaque to bash; stub them out.
+                  import re
+                  print(re.sub(r"\$\{\{[^}]*\}\}", "PLACEHOLDER", step["run"]))
+          PY
+          bash -n /tmp/steps.sh && echo "action shell scripts parse"
